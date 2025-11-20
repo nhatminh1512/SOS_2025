@@ -168,6 +168,48 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     
     return R * c
 
+def create_google_maps_link(address):
+    """Tạo link Google Maps từ địa chỉ hoặc tọa độ"""
+    import urllib.parse
+    import re
+    
+    address_str = str(address)
+    
+    # Kiểm tra xem có tọa độ trong địa chỉ không (format: lat,lng hoặc (Tọa độ: lat,lng))
+    coord_pattern = r'\(Tọa độ:\s*([0-9.]+),\s*([0-9.]+)\)|([0-9.]+),\s*([0-9.]+)'
+    match = re.search(coord_pattern, address_str)
+    
+    if match:
+        # Tìm tọa độ trong match
+        if match.group(1) and match.group(2):
+            lat, lng = match.group(1), match.group(2)
+        elif match.group(3) and match.group(4):
+            lat, lng = match.group(3), match.group(4)
+        else:
+            lat, lng = None, None
+        
+        # Kiểm tra xem có phải là tọa độ hợp lệ không (Việt Nam: 8-24N, 102-110E)
+        try:
+            lat_f = float(lat)
+            lng_f = float(lng)
+            if 8 <= lat_f <= 24 and 102 <= lng_f <= 110:
+                # Sử dụng tọa độ trực tiếp
+                return f"https://www.google.com/maps?q={lat_f},{lng_f}"
+        except:
+            pass
+    
+    # Nếu không có tọa độ, sử dụng địa chỉ text
+    # Làm sạch địa chỉ: loại bỏ phần tọa độ nếu có
+    clean_address = re.sub(r'\(Tọa độ:[^)]+\)', '', address_str).strip()
+    clean_address = re.sub(r'^\s*([0-9.]+),\s*([0-9.]+)\s*$', '', clean_address).strip()
+    
+    # Thêm "Việt Nam" nếu chưa có để tăng độ chính xác
+    if 'việt nam' not in clean_address.lower() and 'vietnam' not in clean_address.lower():
+        clean_address = f"{clean_address}, Việt Nam"
+    
+    encoded_address = urllib.parse.quote(clean_address)
+    return f"https://www.google.com/maps/search/?api=1&query={encoded_address}"
+
 # Load data
 if st.session_state.data is None:
     st.session_state.data = load_data()
@@ -279,12 +321,53 @@ with tab1:
             else:
                 display_data = filtered_data
             
-            # Display table
-            st.dataframe(
-                display_data,
-                use_container_width=True,
-                hide_index=True
-            )
+            # Display options: Table or Cards
+            display_mode = st.radio("Chế độ hiển thị:", ["Bảng", "Thẻ (có link Google Maps)"], horizontal=True)
+            
+            if display_mode == "Bảng":
+                # Add Google Maps link column
+                display_data_with_links = display_data.copy()
+                if 'Địa chỉ' in display_data_with_links.columns:
+                    # Create HTML links for Google Maps
+                    def make_maps_link(address):
+                        if pd.notna(address) and str(address).strip():
+                            maps_url = create_google_maps_link(address)
+                            return f'<a href="{maps_url}" target="_blank" style="color: #4285F4; text-decoration: none;">📍 Mở Maps</a>'
+                        return ''
+                    
+                    display_data_with_links['🗺️ Maps'] = display_data_with_links['Địa chỉ'].apply(make_maps_link)
+                
+                # Display table with HTML
+                st.markdown(display_data_with_links.to_html(escape=False, index=False), unsafe_allow_html=True)
+            else:
+                # Display as cards with Google Maps links
+                for idx, row in display_data.iterrows():
+                    with st.expander(f"📍 {row.get('Địa chỉ', 'N/A')[:50]}...", expanded=False):
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            if 'Mức độ ưu tiên' in row:
+                                priority = str(row['Mức độ ưu tiên'])
+                                priority_icon = '🔴' if priority == 'Khẩn cấp' else '🟠' if priority == 'Cao' else '🟡' if priority == 'Trung bình' else '🟢'
+                                st.markdown(f"**{priority_icon} Mức độ ưu tiên:** {priority}")
+                            
+                            if 'Chi tiết khu vực' in row:
+                                st.markdown(f"**📍 Khu vực:** {row['Chi tiết khu vực']}")
+                            
+                            if 'Địa chỉ' in row:
+                                address = str(row['Địa chỉ'])
+                                maps_link = create_google_maps_link(address)
+                                st.markdown(f"**🏠 Địa chỉ:** <a href='{maps_link}' target='_blank' style='color: #4285F4; text-decoration: underline;'>{address}</a>", unsafe_allow_html=True)
+                            
+                            if 'Số người' in row and pd.notna(row['Số người']):
+                                st.markdown(f"**👥 Số người:** {row['Số người']}")
+                            
+                            if 'Số điện thoại' in row and pd.notna(row['Số điện thoại']):
+                                st.markdown(f"**📞 Số điện thoại:** {row['Số điện thoại']}")
+                        
+                        with col2:
+                            if 'Địa chỉ' in row and pd.notna(row['Địa chỉ']):
+                                maps_link = create_google_maps_link(row['Địa chỉ'])
+                                st.markdown(f'<a href="{maps_link}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #4285F4; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">🗺️ Mở Google Maps</a>', unsafe_allow_html=True)
             
             # Download filtered data
             csv = filtered_data.to_csv(index=False, encoding='utf-8-sig')
@@ -300,103 +383,6 @@ with tab1:
 with tab2:
     st.header("Thêm yêu cầu cứu hộ mới")
     
-    # Initialize GPS coordinates in session state
-    if 'gps_coords' not in st.session_state:
-        st.session_state.gps_coords = ""
-    
-    # GPS location section
-    st.markdown("### 📍 Lấy vị trí GPS")
-    
-    col_gps1, col_gps2 = st.columns([2, 1])
-    with col_gps1:
-        st.info("Nhấn nút bên cạnh để lấy tọa độ GPS của bạn. Tọa độ sẽ được copy tự động vào clipboard.")
-    with col_gps2:
-        get_gps_clicked = st.button("📍 Lấy vị trí GPS", help="Lấy tọa độ GPS của bạn", use_container_width=True, type="primary")
-    
-    # GPS result display
-    if 'gps_result' not in st.session_state:
-        st.session_state.gps_result = None
-    
-    if get_gps_clicked:
-        st.session_state.gps_result = "loading"
-    
-    if st.session_state.gps_result == "loading":
-        st.markdown("""
-        <div id="gps-location-result" style="padding: 15px; background-color: #e3f2fd; border-radius: 5px; margin: 10px 0;">
-            <p style="color: #1976d2; margin: 0;">⏳ Đang lấy vị trí... Vui lòng cho phép trình duyệt truy cập vị trí của bạn.</p>
-        </div>
-        <script>
-        (function() {
-            const resultDiv = document.getElementById('gps-location-result');
-            if (!resultDiv) return;
-            
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    function(position) {
-                        const lat = position.coords.latitude;
-                        const lng = position.coords.longitude;
-                        const coords = lat.toFixed(6) + ',' + lng.toFixed(6);
-                        
-                        resultDiv.innerHTML = '<p style="color: #2e7d32; margin: 5px 0;"><strong>✅ Vị trí của bạn:</strong></p>' +
-                            '<p style="color: #1976d2; font-size: 18px; font-weight: bold; margin: 10px 0; background: white; padding: 10px; border-radius: 5px;">' + coords + '</p>' +
-                            '<p style="color: #1976d2; margin: 5px 0;">✓ Đã copy vào clipboard! Vui lòng dán vào ô địa chỉ bên dưới.</p>' +
-                            '<p style="color: #666; font-size: 12px; margin: 5px 0;">💡 Nhấn Ctrl+V (hoặc Cmd+V trên Mac) để dán vào ô địa chỉ</p>';
-                        
-                        // Copy to clipboard
-                        if (navigator.clipboard && navigator.clipboard.writeText) {
-                            navigator.clipboard.writeText(coords).then(function() {
-                                console.log('Coordinates copied to clipboard: ' + coords);
-                            }).catch(function(err) {
-                                console.error('Failed to copy: ', err);
-                                // Show coords in alert as fallback
-                                alert('Tọa độ: ' + coords + '\\n\\nVui lòng copy thủ công.');
-                            });
-                        } else {
-                            // Fallback for older browsers
-                            const textArea = document.createElement('textarea');
-                            textArea.value = coords;
-                            textArea.style.position = 'fixed';
-                            textArea.style.opacity = '0';
-                            document.body.appendChild(textArea);
-                            textArea.select();
-                            try {
-                                document.execCommand('copy');
-                                console.log('Coordinates copied (fallback method)');
-                            } catch (err) {
-                                console.error('Fallback copy failed: ', err);
-                                alert('Tọa độ: ' + coords + '\\n\\nVui lòng copy thủ công.');
-                            }
-                            document.body.removeChild(textArea);
-                        }
-                    },
-                    function(error) {
-                        let errorMsg = 'Không xác định được';
-                        switch(error.code) {
-                            case error.PERMISSION_DENIED:
-                                errorMsg = 'Bạn đã từ chối quyền truy cập vị trí';
-                                break;
-                            case error.POSITION_UNAVAILABLE:
-                                errorMsg = 'Không thể xác định vị trí';
-                                break;
-                            case error.TIMEOUT:
-                                errorMsg = 'Hết thời gian chờ';
-                                break;
-                        }
-                        resultDiv.innerHTML = '<p style="color: #d32f2f; margin: 0;">❌ Lỗi: ' + errorMsg + '</p>';
-                    },
-                    {
-                        enableHighAccuracy: true,
-                        timeout: 10000,
-                        maximumAge: 0
-                    }
-                );
-            } else {
-                resultDiv.innerHTML = '<p style="color: #d32f2f; margin: 0;">❌ Trình duyệt không hỗ trợ Geolocation API</p>';
-            }
-        })();
-        </script>
-        """, unsafe_allow_html=True)
-    
     with st.form("add_rescue_request", clear_on_submit=True):
         col1, col2 = st.columns(2)
         
@@ -410,18 +396,9 @@ with tab2:
             num_people = st.text_input("Số người", placeholder="VD: 5, Nhiều, 10-15")
         
         with col2:
-            # Show GPS coordinates if available
-            if st.session_state.gps_coords:
-                st.success(f"📍 Tọa độ GPS: {st.session_state.gps_coords}")
+            address = st.text_area("Địa chỉ *", height=100, placeholder="Nhập địa chỉ chi tiết...")
             
-            address = st.text_area(
-                "Địa chỉ *", 
-                height=100, 
-                placeholder="Nhập địa chỉ chi tiết hoặc tọa độ (lat,lng)...\nVí dụ: 12.2388,109.1967",
-                value=st.session_state.gps_coords if st.session_state.gps_coords else ""
-            )
-            
-            phone = st.text_input("Số điện thoại", placeholder="VD: 0912345678, 0901234567")
+            phone = st.text_input("Số điện thoại *", placeholder="VD: 0912345678, 0901234567")
         
         st.info("ℹ️ AI sẽ tự động phân tích địa chỉ để: cải thiện địa chỉ và trích xuất khu vực.")
         
@@ -431,6 +408,8 @@ with tab2:
             # Validation
             if not address:
                 st.error("Vui lòng điền địa chỉ (*)")
+            elif not phone:
+                st.error("Vui lòng điền số điện thoại (*)")
             else:
                 # Automatically improve address and extract area with Gemini
                 final_address = address
