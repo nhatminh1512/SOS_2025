@@ -304,43 +304,96 @@ with tab2:
     if 'gps_coords' not in st.session_state:
         st.session_state.gps_coords = ""
     
-    # GPS location button outside form
-    col_gps1, col_gps2 = st.columns([3, 1])
+    # GPS location section
+    st.markdown("### 📍 Lấy vị trí GPS")
+    
+    col_gps1, col_gps2 = st.columns([2, 1])
     with col_gps1:
-        st.markdown("**Lấy vị trí GPS:**")
+        st.info("Nhấn nút bên cạnh để lấy tọa độ GPS của bạn. Tọa độ sẽ được copy tự động vào clipboard.")
     with col_gps2:
-        get_gps_clicked = st.button("📍 Lấy vị trí GPS", help="Lấy tọa độ GPS của bạn", use_container_width=True)
+        get_gps_clicked = st.button("📍 Lấy vị trí GPS", help="Lấy tọa độ GPS của bạn", use_container_width=True, type="primary")
+    
+    # GPS result display
+    if 'gps_result' not in st.session_state:
+        st.session_state.gps_result = None
     
     if get_gps_clicked:
+        st.session_state.gps_result = "loading"
+    
+    if st.session_state.gps_result == "loading":
         st.markdown("""
-        <div id="gps-location-result" style="padding: 10px; background-color: #f0f2f6; border-radius: 5px; margin-bottom: 10px;"></div>
+        <div id="gps-location-result" style="padding: 15px; background-color: #e3f2fd; border-radius: 5px; margin: 10px 0;">
+            <p style="color: #1976d2; margin: 0;">⏳ Đang lấy vị trí... Vui lòng cho phép trình duyệt truy cập vị trí của bạn.</p>
+        </div>
         <script>
-        function getGPSLocation() {
+        (function() {
             const resultDiv = document.getElementById('gps-location-result');
+            if (!resultDiv) return;
+            
             if (navigator.geolocation) {
-                resultDiv.innerHTML = '<p style="color: blue;">⏳ Đang lấy vị trí...</p>';
                 navigator.geolocation.getCurrentPosition(
                     function(position) {
                         const lat = position.coords.latitude;
                         const lng = position.coords.longitude;
                         const coords = lat.toFixed(6) + ',' + lng.toFixed(6);
-                        resultDiv.innerHTML = '<p style="color: green;"><strong>✅ Vị trí của bạn:</strong><br>' + 
-                            coords + '</p><p style="color: blue;">✓ Đã copy vào clipboard! Vui lòng dán vào ô địa chỉ bên dưới.</p>';
+                        
+                        resultDiv.innerHTML = '<p style="color: #2e7d32; margin: 5px 0;"><strong>✅ Vị trí của bạn:</strong></p>' +
+                            '<p style="color: #1976d2; font-size: 18px; font-weight: bold; margin: 10px 0; background: white; padding: 10px; border-radius: 5px;">' + coords + '</p>' +
+                            '<p style="color: #1976d2; margin: 5px 0;">✓ Đã copy vào clipboard! Vui lòng dán vào ô địa chỉ bên dưới.</p>' +
+                            '<p style="color: #666; font-size: 12px; margin: 5px 0;">💡 Nhấn Ctrl+V (hoặc Cmd+V trên Mac) để dán vào ô địa chỉ</p>';
                         
                         // Copy to clipboard
-                        navigator.clipboard.writeText(coords).then(() => {
-                            console.log('Coordinates copied to clipboard');
-                        });
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(coords).then(function() {
+                                console.log('Coordinates copied to clipboard: ' + coords);
+                            }).catch(function(err) {
+                                console.error('Failed to copy: ', err);
+                                // Show coords in alert as fallback
+                                alert('Tọa độ: ' + coords + '\\n\\nVui lòng copy thủ công.');
+                            });
+                        } else {
+                            // Fallback for older browsers
+                            const textArea = document.createElement('textarea');
+                            textArea.value = coords;
+                            textArea.style.position = 'fixed';
+                            textArea.style.opacity = '0';
+                            document.body.appendChild(textArea);
+                            textArea.select();
+                            try {
+                                document.execCommand('copy');
+                                console.log('Coordinates copied (fallback method)');
+                            } catch (err) {
+                                console.error('Fallback copy failed: ', err);
+                                alert('Tọa độ: ' + coords + '\\n\\nVui lòng copy thủ công.');
+                            }
+                            document.body.removeChild(textArea);
+                        }
                     },
                     function(error) {
-                        resultDiv.innerHTML = '<p style="color: red;">❌ Lỗi: ' + error.message + '</p>';
+                        let errorMsg = 'Không xác định được';
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED:
+                                errorMsg = 'Bạn đã từ chối quyền truy cập vị trí';
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                errorMsg = 'Không thể xác định vị trí';
+                                break;
+                            case error.TIMEOUT:
+                                errorMsg = 'Hết thời gian chờ';
+                                break;
+                        }
+                        resultDiv.innerHTML = '<p style="color: #d32f2f; margin: 0;">❌ Lỗi: ' + errorMsg + '</p>';
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0
                     }
                 );
             } else {
-                resultDiv.innerHTML = '<p style="color: red;">❌ Trình duyệt không hỗ trợ Geolocation API</p>';
+                resultDiv.innerHTML = '<p style="color: #d32f2f; margin: 0;">❌ Trình duyệt không hỗ trợ Geolocation API</p>';
             }
-        }
-        getGPSLocation();
+        })();
         </script>
         """, unsafe_allow_html=True)
     
@@ -357,6 +410,10 @@ with tab2:
             num_people = st.text_input("Số người", placeholder="VD: 5, Nhiều, 10-15")
         
         with col2:
+            # Show GPS coordinates if available
+            if st.session_state.gps_coords:
+                st.success(f"📍 Tọa độ GPS: {st.session_state.gps_coords}")
+            
             address = st.text_area(
                 "Địa chỉ *", 
                 height=100, 
