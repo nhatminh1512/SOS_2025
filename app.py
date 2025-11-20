@@ -262,7 +262,7 @@ with tab1:
         st.warning("Không có dữ liệu. Vui lòng kiểm tra file CSV.")
     else:
         # Filters
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             # Priority filter
@@ -282,7 +282,11 @@ with tab1:
         
         with col3:
             # Search by address
-            search_term = st.text_input("Tìm kiếm theo địa chỉ", "")
+            search_term = st.text_input("Tìm theo địa chỉ", "")
+        
+        with col4:
+            # Search by phone
+            search_phone = st.text_input("Tìm theo số điện thoại", "", placeholder="VD: 0912345678")
         
         # Apply filters
         filtered_data = st.session_state.original_data.copy()
@@ -297,6 +301,12 @@ with tab1:
             if 'Địa chỉ' in filtered_data.columns:
                 filtered_data = filtered_data[
                     filtered_data['Địa chỉ'].astype(str).str.contains(search_term, case=False, na=False)
+                ]
+        
+        if search_phone:
+            if 'Số điện thoại' in filtered_data.columns:
+                filtered_data = filtered_data[
+                    filtered_data['Số điện thoại'].astype(str).str.contains(search_phone, case=False, na=False)
                 ]
         
         # Display results
