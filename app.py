@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime
 import google.generativeai as genai
+import math
 
 # Page config
 st.set_page_config(
@@ -110,6 +111,62 @@ def extract_area_from_address(address, api_key):
             return "Khác", "API key không hợp lệ"
         else:
             return "Khác", f"Lỗi: {error_msg[:100]}"
+
+def geocode_address(address, api_key):
+    """Sử dụng Gemini API để geocode địa chỉ thành tọa độ lat/long"""
+    if not api_key:
+        return None, None, "Vui lòng nhập API key Gemini"
+    
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        prompt = f"""Từ địa chỉ sau đây ở Việt Nam, hãy trả về tọa độ địa lý (latitude, longitude) dạng số thập phân.
+        Chỉ trả về 2 số cách nhau bởi dấu phẩy, không có chữ hay ký tự khác.
+        Ví dụ: 12.2388, 109.1967
+        
+        Địa chỉ: {address}
+        
+        Tọa độ (lat, lng):"""
+        
+        response = model.generate_content(prompt)
+        coords = response.text.strip()
+        
+        # Parse coordinates
+        try:
+            # Làm sạch kết quả
+            coords = coords.replace("(", "").replace(")", "").replace("Tọa độ:", "").replace("lat, lng:", "").strip()
+            parts = coords.split(",")
+            if len(parts) == 2:
+                lat = float(parts[0].strip())
+                lng = float(parts[1].strip())
+                # Kiểm tra tọa độ hợp lệ cho Việt Nam (khoảng 8-24N, 102-110E)
+                if 8 <= lat <= 24 and 102 <= lng <= 110:
+                    return lat, lng, "Thành công"
+        except:
+            pass
+        
+        return None, None, "Không thể parse tọa độ"
+    except Exception as e:
+        error_msg = str(e)
+        if "429" in error_msg or "quota" in error_msg.lower() or "Quota exceeded" in error_msg:
+            return None, None, "Quota API đã hết"
+        elif "API key" in error_msg or "authentication" in error_msg.lower():
+            return None, None, "API key không hợp lệ"
+        else:
+            return None, None, f"Lỗi: {error_msg[:100]}"
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """Tính khoảng cách giữa 2 điểm (Haversine formula) - trả về km"""
+    R = 6371  # Bán kính Trái Đất (km)
+    
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    
+    return R * c
 
 # Load data
 if st.session_state.data is None:
@@ -243,6 +300,50 @@ with tab1:
 with tab2:
     st.header("Thêm yêu cầu cứu hộ mới")
     
+    # Initialize GPS coordinates in session state
+    if 'gps_coords' not in st.session_state:
+        st.session_state.gps_coords = ""
+    
+    # GPS location button outside form
+    col_gps1, col_gps2 = st.columns([3, 1])
+    with col_gps1:
+        st.markdown("**Lấy vị trí GPS:**")
+    with col_gps2:
+        get_gps_clicked = st.button("📍 Lấy vị trí GPS", help="Lấy tọa độ GPS của bạn", use_container_width=True)
+    
+    if get_gps_clicked:
+        st.markdown("""
+        <div id="gps-location-result" style="padding: 10px; background-color: #f0f2f6; border-radius: 5px; margin-bottom: 10px;"></div>
+        <script>
+        function getGPSLocation() {
+            const resultDiv = document.getElementById('gps-location-result');
+            if (navigator.geolocation) {
+                resultDiv.innerHTML = '<p style="color: blue;">⏳ Đang lấy vị trí...</p>';
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        const coords = lat.toFixed(6) + ',' + lng.toFixed(6);
+                        resultDiv.innerHTML = '<p style="color: green;"><strong>✅ Vị trí của bạn:</strong><br>' + 
+                            coords + '</p><p style="color: blue;">✓ Đã copy vào clipboard! Vui lòng dán vào ô địa chỉ bên dưới.</p>';
+                        
+                        // Copy to clipboard
+                        navigator.clipboard.writeText(coords).then(() => {
+                            console.log('Coordinates copied to clipboard');
+                        });
+                    },
+                    function(error) {
+                        resultDiv.innerHTML = '<p style="color: red;">❌ Lỗi: ' + error.message + '</p>';
+                    }
+                );
+            } else {
+                resultDiv.innerHTML = '<p style="color: red;">❌ Trình duyệt không hỗ trợ Geolocation API</p>';
+            }
+        }
+        getGPSLocation();
+        </script>
+        """, unsafe_allow_html=True)
+    
     with st.form("add_rescue_request", clear_on_submit=True):
         col1, col2 = st.columns(2)
         
@@ -256,7 +357,12 @@ with tab2:
             num_people = st.text_input("Số người", placeholder="VD: 5, Nhiều, 10-15")
         
         with col2:
-            address = st.text_area("Địa chỉ *", height=100, placeholder="Nhập địa chỉ chi tiết...")
+            address = st.text_area(
+                "Địa chỉ *", 
+                height=100, 
+                placeholder="Nhập địa chỉ chi tiết hoặc tọa độ (lat,lng)...\nVí dụ: 12.2388,109.1967",
+                value=st.session_state.gps_coords if st.session_state.gps_coords else ""
+            )
             
             phone = st.text_input("Số điện thoại", placeholder="VD: 0912345678, 0901234567")
         
@@ -366,6 +472,7 @@ with tab3:
                     st.warning("⚠️ Không thể cải thiện địa chỉ. Sử dụng địa chỉ gốc.")
         elif analyze_btn:
             st.warning("Vui lòng nhập địa chỉ cần phân tích.")
+
 
 # Footer
 st.markdown("---")
