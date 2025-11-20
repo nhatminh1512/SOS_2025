@@ -13,7 +13,7 @@ ENV/
 .streamlit/
 
 # CSV files (chứa dữ liệu nhạy cảm)
-# Cho phép file CSV chính của ứng dụng
+# Cho phép file CSV chính của ứng dụng (phải đặt trước rule *.csv)
 !mở quyền sửa đổi - HOÀN THIỆN - KV.csv
 *.csv
 
