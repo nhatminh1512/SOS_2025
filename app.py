@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # Default Gemini API Key
-DEFAULT_GEMINI_API_KEY = "AIzaSyDjKUsmoQ_uaCImS1O--vUM0jUzo_bOo7I"
+DEFAULT_GEMINI_API_KEY = "AIzaSyCRMXgg-HuKvJdi0hKuen94oUR3MPsQBFQ"
 
 # Initialize session state
 if 'data' not in st.session_state:
@@ -47,8 +47,8 @@ def analyze_address_with_gemini(address, api_key):
     
     try:
         genai.configure(api_key=api_key)
-        # Sử dụng gemini-1.5-flash vì có trong free tier và ổn định hơn
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Sử dụng gemini-2.5-flash - model mới nhất và nhanh nhất
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         prompt = f"""Phân tích và làm rõ địa chỉ sau đây, trả về địa chỉ đã được chuẩn hóa và rõ ràng hơn. 
         Nếu địa chỉ đã rõ ràng thì giữ nguyên. Chỉ trả về địa chỉ đã được cải thiện, không thêm giải thích.
@@ -74,6 +74,42 @@ def analyze_address_with_gemini(address, api_key):
             return address, "API key không hợp lệ."
         else:
             return address, f"Lỗi: {error_msg[:100]}"
+
+def extract_area_from_address(address, api_key):
+    """Sử dụng Gemini API để trích xuất khu vực từ địa chỉ"""
+    if not api_key:
+        return "", "Vui lòng nhập API key Gemini"
+    
+    try:
+        genai.configure(api_key=api_key)
+        # Sử dụng gemini-2.5-flash - model mới nhất và nhanh nhất
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        prompt = f"""Từ địa chỉ sau đây, hãy trích xuất tên khu vực/địa danh chính (ví dụ: Diên Khánh, Diên Lạc, Diên An, Cầu Bè, Bàn Thạch, v.v.).
+        Chỉ trả về tên khu vực, không thêm giải thích hay từ ngữ khác.
+        Nếu không tìm thấy khu vực rõ ràng, trả về "Khác".
+        
+        Địa chỉ: {address}
+        
+        Khu vực:"""
+        
+        response = model.generate_content(prompt)
+        area = response.text.strip()
+        
+        # Làm sạch kết quả
+        area = area.replace("Khu vực:", "").replace("khu vực:", "").strip()
+        if not area or len(area) < 2:
+            area = "Khác"
+        
+        return area, "Thành công"
+    except Exception as e:
+        error_msg = str(e)
+        if "429" in error_msg or "quota" in error_msg.lower() or "Quota exceeded" in error_msg:
+            return "Khác", "Quota API đã hết"
+        elif "API key" in error_msg or "authentication" in error_msg.lower():
+            return "Khác", "API key không hợp lệ"
+        else:
+            return "Khác", f"Lỗi: {error_msg[:100]}"
 
 # Load data
 if st.session_state.data is None:
@@ -217,8 +253,6 @@ with tab2:
                 index=0
             )
             
-            area = st.text_input("Chi tiết khu vực *")
-            
             num_people = st.text_input("Số người", placeholder="VD: 5, Nhiều, 10-15")
         
         with col2:
@@ -226,37 +260,50 @@ with tab2:
             
             phone = st.text_input("Số điện thoại", placeholder="VD: 0912345678, 0901234567")
         
-        st.info("ℹ️ Địa chỉ sẽ tự động được cải thiện bằng Gemini AI khi thêm yêu cầu.")
+        st.info("ℹ️ AI sẽ tự động phân tích địa chỉ để: cải thiện địa chỉ và trích xuất khu vực.")
         
         submitted = st.form_submit_button("➕ Thêm yêu cầu", type="primary")
         
         if submitted:
             # Validation
-            if not area or not address:
-                st.error("Vui lòng điền đầy đủ các trường bắt buộc (*)")
+            if not address:
+                st.error("Vui lòng điền địa chỉ (*)")
             else:
-                # Automatically improve address with Gemini
+                # Automatically improve address and extract area with Gemini
                 final_address = address
+                extracted_area = "Khác"
+                
                 if st.session_state.gemini_api_key:
-                    with st.spinner("🔄 Đang tự động phân tích và cải thiện địa chỉ với Gemini AI..."):
-                        final_address, status = analyze_address_with_gemini(address, st.session_state.gemini_api_key)
-                        if "Quota" in status or "quota" in status.lower():
+                    with st.spinner("🔄 Đang phân tích địa chỉ với AI (cải thiện địa chỉ và trích xuất khu vực)..."):
+                        # Cải thiện địa chỉ
+                        final_address, address_status = analyze_address_with_gemini(address, st.session_state.gemini_api_key)
+                        if "Quota" in address_status or "quota" in address_status.lower():
                             st.warning("⚠️ Quota API đã hết. Sử dụng địa chỉ gốc. Vui lòng thử lại sau hoặc kiểm tra billing.")
                             final_address = address
-                        elif "Lỗi" in status or "Vui lòng" in status or "không hợp lệ" in status.lower():
-                            st.warning(f"⚠️ {status}. Sử dụng địa chỉ gốc.")
+                        elif "Lỗi" in address_status or "Vui lòng" in address_status or "không hợp lệ" in address_status.lower():
+                            st.warning(f"⚠️ {address_status}. Sử dụng địa chỉ gốc.")
                             final_address = address
-                        elif status == "Thành công" and final_address != address:
+                        elif address_status == "Thành công" and final_address != address:
                             st.success("✅ Đã tự động cải thiện địa chỉ!")
                             st.info(f"**Địa chỉ gốc:** {address}\n\n**Địa chỉ đã cải thiện:** {final_address}")
                         else:
-                            # Địa chỉ không thay đổi hoặc không cần cải thiện
                             final_address = address
+                        
+                        # Trích xuất khu vực từ địa chỉ đã cải thiện
+                        extracted_area, area_status = extract_area_from_address(final_address, st.session_state.gemini_api_key)
+                        if area_status == "Thành công":
+                            st.success(f"✅ Đã tự động trích xuất khu vực: **{extracted_area}**")
+                        elif "Quota" in area_status:
+                            st.warning("⚠️ Không thể trích xuất khu vực do hết quota. Sử dụng 'Khác'.")
+                        else:
+                            st.warning(f"⚠️ Không thể trích xuất khu vực. Sử dụng 'Khác'.")
+                else:
+                    st.warning("⚠️ Chưa có API key. Khu vực sẽ được đặt là 'Khác'.")
                 
                 # Create new row
                 new_row = pd.DataFrame({
                     'Mức độ ưu tiên': [priority],
-                    'Chi tiết khu vực': [area],
+                    'Chi tiết khu vực': [extracted_area],
                     'Số người': [num_people if num_people else ""],
                     'Địa chỉ': [final_address],
                     'Số điện thoại': [phone if phone else ""]
